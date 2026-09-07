@@ -13,6 +13,7 @@ import ast
 import json
 import operator
 
+from datetime import datetime
 from openai import OpenAI
 
 # ---- tool 1: calculator (safe, no eval) ----
@@ -45,8 +46,12 @@ def read_file(path: str) -> str:
     with open(full, encoding="utf-8") as f:
         return f.read()[:4000]
 
+# ---- tool 3: clock ----
+def clock() -> str:
+    """Return the current date and time."""
+    return datetime.now().isoformat()
 
-TOOLS_IMPL = {"calculator": calculator, "read_file": read_file}
+TOOLS_IMPL = {"calculator": calculator, "read_file": read_file, "clock": clock}
 
 # ---- tool schemas handed to the model (the description IS the interface) ----
 TOOLS = [
@@ -64,7 +69,13 @@ TOOLS = [
          "parameters": {"type": "object",
                         "properties": {"path": {"type": "string"}},
                         "required": ["path"]}}},
-    # TODO: add your third tool's schema here.
+    {"type": "function",
+     "function": {
+         "name": "clock",
+         "description": "Get the current date and time.",
+         "parameters": {"type": "object",
+                        "properties": {},
+                        "required": []}}}
 ]
 
 MODEL = os.environ.get("AGENT_MODEL", "gpt-4o-mini")

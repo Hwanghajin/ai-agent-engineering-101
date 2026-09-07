@@ -1,8 +1,4 @@
-Meeting memo, 2026-09-01
+프로젝트 마감일: 2026-09-20
 
-Attendees: 4
-Pizza budget: 48000
-Drinks: 9500
-Reimbursed so far: 12000
-
-Sum the numbers above to get the total the agent should report.
+프로젝트 제출 마감: 2026년 9월 20일
+이 날짜까지 최종 보고서를 제출해야 함.
