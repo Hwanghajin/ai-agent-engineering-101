@@ -5,7 +5,7 @@ Kept as process evidence (course grades on visible attempts/discards, not just t
 
 ## 1. API key found hardcoded in first_agent.py
 
-`first_agent.py` (copied from starter) had an OpenRouter key (`sk-or-v1-...`) pasted as a stray
+`first_agent.py` (copied from starter) had an OpenRouter key pasted as a stray
 string literal at the end of the file. Claude flagged it as a secret-exposure risk — this repo
 never squashes/rewrites history, so a committed key stays in public history permanently even
 after later removal. Action taken: key deleted from the file; key revoked and regenerated on
