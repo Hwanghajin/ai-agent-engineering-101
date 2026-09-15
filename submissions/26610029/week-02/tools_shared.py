@@ -17,7 +17,7 @@ from dataclasses import dataclass, field
 
 # ---------------------------------------------------------------- tools
 
-
+# read_file -> 도구 1
 def read_file(path: str) -> str:
     """Return the contents of a text file in the working directory."""
     full = os.path.abspath(path)
@@ -26,7 +26,7 @@ def read_file(path: str) -> str:
     with open(full, encoding="utf-8") as f:
         return f.read()[:4000]          # context guard, same as week 01
 
-
+# count_pattern -> 도구 2
 def count_pattern(path: str, pattern: str) -> str:
     """Count lines in a text file that match a regular expression."""
     full = os.path.abspath(path)
@@ -56,7 +56,7 @@ TOOL_SPECS = [
 
 # ---------------------------------------------------------------- meter
 
-
+# 네 지표를 한 곳에서 센다
 class Meter:
     """The four metrics of the lab, counted in one place."""
 

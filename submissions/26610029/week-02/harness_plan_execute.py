@@ -4,6 +4,7 @@ One call produces the whole plan as a JSON list. Then each step is executed
 in order with tools. If a step reports OFF_PLAN, the plan is rebuilt once
 (max_replan=1): that number is the flexibility cap, and it is explicit.
 """
+# Plan-then-Ececute형: 계획을 먼저 굳히고 순서대로 실행
 import json
 import re
 import sys
@@ -38,7 +39,7 @@ def run_plan_execute(task: str, max_replan: int = 1,
                      max_tool_rounds: int = 3, log=print):
     meter = Meter()
 
-    # 1) PLAN: the whole plan in one call, no tools
+    # 1) PLAN: the whole plan in one call, no tools (전체 계획을 한 번에 요청)
     planner = Chat(SYSTEM_PLAN, meter, tools=False)
     planner.add_user(f"Task: {task}\nAvailable tools: read_file(path), "
                      f"count_pattern(path, pattern).")
@@ -49,7 +50,7 @@ def run_plan_execute(task: str, max_replan: int = 1,
         return "plan parse failed", meter, 0
     log(f"[plan] {plan}")
 
-    # 2) EXECUTE: each step in order
+    # 2) EXECUTE: each step in order (계획의 각 단계를 순서대로 실행)
     executor = Chat(SYSTEM_EXEC, meter)
     executor.add_user(f"Task: {task}\nPlan: {json.dumps(plan)}")
     replans = 0
