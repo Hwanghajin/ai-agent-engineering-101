@@ -1,0 +1,5 @@
+{
+  "harness": "claude -p --tools \"\" --setting-sources \"\" --no-session-persistence (Claude Code CLI, headless mode, no tools, no project settings). Buyer uses --model haiku; seller uses --model sonnet (haiku kept anchoring on its opening ask and never moved -- see REPORT.md).",
+  "seller": {"cmd": "python3 seller.py --port {port}"},
+  "buyer": {"cmd": "python3 buyer.py --url {url} --item {item} --budget {budget}"}
+}
