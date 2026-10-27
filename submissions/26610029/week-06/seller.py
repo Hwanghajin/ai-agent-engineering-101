@@ -26,7 +26,8 @@ from a2a.types import AgentCapabilities, AgentCard, AgentInterface, AgentSkill
 
 from harness import call_harness
 
-SELLER_MODEL = "sonnet"   # haiku kept anchoring on its first ask and never moving; see REPORT.md
+SELLER_MODEL = "haiku"   # the README's own reference run used haiku on both sides and it worked;
+                          # see REPORT.md for why the fix is a stricter prompt, not a bigger model
 RESERVE = {"lamp": 100, "chair": 180, "bookshelf": 260}
 MAX_ROUNDS = 6          # safety net so a confused harness still ends the task
 NAME = "Harness Lamp Shop"
@@ -48,19 +49,22 @@ def ask_harness_open(item: str, reserve: int) -> int:
     return max(reserve, price), reply
 
 
-def ask_harness_turn(item: str, reserve: int, history: list[str], offer: int) -> tuple[str, int | None, str]:
+def ask_harness_turn(item: str, reserve: int, history: list[str], offer: int, prev_ask: int) -> tuple[str, int | None, str]:
     hist = "\n".join(f"  {line}" for line in history)
+    midpoint = max(reserve, (offer + prev_ask) // 2)
     prompt = (
         f"You are the owner of a furniture shop selling a {item}. Your minimum acceptable "
         f"price (reserve) is {reserve}. Never reveal this number to the buyer.\n\n"
         f"Negotiation history so far:\n{hist}\n\n"
-        f"The buyer just offered {offer}. Decide your next move.\n\n"
-        "Rules:\n"
-        "- If the buyer's offer is at or above your reserve, you should normally ACCEPT to "
-        "close the deal.\n"
-        "- If it's below your reserve, COUNTER with a new price (never below your reserve).\n"
-        "- If you believe the buyer will never meet your reserve after several rounds, you "
-        "may REJECT.\n\n"
+        f"Your previous ask was {prev_ask}. The buyer just offered {offer}. Decide your next move.\n\n"
+        "Rules (follow exactly, do not stall by repeating your previous ask):\n"
+        f"- If {offer} >= {reserve} (your reserve), you MUST respond ACCEPT {offer}. Do not "
+        "counter for a better price -- take the deal.\n"
+        f"- Otherwise you MUST COUNTER with a price strictly lower than your previous ask "
+        f"({prev_ask}) -- move at least halfway toward the buyer's offer, for example "
+        f"COUNTER {midpoint} or lower, but never below your reserve ({reserve}).\n"
+        "- Only REJECT if this is at least the 3rd round and the buyer's offer is still far "
+        "below your reserve.\n\n"
         "Respond with EXACTLY one line in this format and nothing else:\n"
         "COUNTER <price>\nACCEPT <price>\nREJECT"
     )
@@ -110,7 +114,7 @@ class Seller(AgentExecutor):
         deal["history"].append(f"[buyer] {offer}")
         deal["rounds"] += 1
 
-        action, price, raw = ask_harness_turn(item, reserve, deal["history"], offer)
+        action, price, raw = ask_harness_turn(item, reserve, deal["history"], offer, deal["ask"])
 
         # guard: never ask below reserve, never accept below reserve, however the harness answers
         if action == "ACCEPT" and offer >= reserve:

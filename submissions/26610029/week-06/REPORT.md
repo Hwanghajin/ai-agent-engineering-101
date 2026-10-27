@@ -3,7 +3,7 @@
 ## 1. 설정
 
 - 하네스: Claude Code CLI 비대화형 모드(`claude -p`), 공통 플래그 `--tools "" --setting-sources "" --no-session-persistence`. 매 턴 `harness.py`의 `call_harness()`가 `tempfile.TemporaryDirectory()`로 새 빈 폴더를 만들어 그 안에서 실행 — 이 리포의 CLAUDE.md/AGENTS.md를 하네스가 읽지 못하게 하기 위함.
-- 모델: **바이어는 `--model haiku`, 셀러는 `--model sonnet`**. 처음엔 둘 다 haiku였는데, haiku가 셀러로는 가격을 전혀 못 움직이는 문제가 있어서 셀러만 sonnet으로 바꿨다 (3번 항목에 근거 있음).
+- 모델: **바이어·셀러 둘 다 `--model haiku`** — README의 레퍼런스 실행("Claude Code with haiku driving both agents")과 같은 조건. 중간에 한 번 셀러만 sonnet으로 바꿔본 적이 있는데, 그건 잘못된 진단이었다(3번 항목 참고) — 결국 모델은 그대로 두고 프롬프트를 고쳐서 해결했다.
 - 실행 환경: 로컬 시스템 python3가 3.9.6이라 a2a-sdk(3.10+ 요구)가 안 돌아서, Homebrew로 Python 3.12를 새로 설치하고 그 위에 venv(`a2a-sdk` 1.2.3, `uvicorn` 0.54.0, `httpx` 0.28.1)를 만들어 썼다.
 - 실행 명령:
   ```bash
@@ -56,12 +56,23 @@ TypeError: unsupported operand type(s) for |: 'type' and 'NoneType'
 
 원인으로 보이는 것: ① 매 턴이 완전히 독립된 무상태 호출(`--no-session-persistence`)이라, "직전에 같은 값을 불렀다"는 사실이 history 텍스트로만 전달되고 haiku는 그걸 반영해 전략을 바꾸지 않았다. ② "reserve 이상이면 *보통(normally)* ACCEPT하라"는 프롬프트 문구가 애매해서, 모델이 "조금 더 받아볼 수 있지 않을까"로 해석했다. ③ haiku는 숫자 비교와 전략 판단을 동시에 요구하는 프롬프트에서 가장 안전한 답(처음 부른 숫자 반복)으로 수렴하는 경향을 보였다.
 
-→ **셀러만 `--model sonnet`으로 교체**했다(바이어는 haiku 유지, 프롬프트·코드는 그대로). 같은 조건으로 재실행하니:
+**첫 시도(틀린 진단): 셀러만 `--model sonnet`으로 교체.** 같은 프롬프트, 모델만 바꾸니 가격이 실제로 움직였다(`150 → 135 → 120`, `380 → ... → 260`에서 모델 스스로 REJECT). 21/21도 통과했다. 하지만 이건 "haiku가 이 협상을 못 한다"는 결론으로 이어지기 쉬운데, `weeks/week-06/README.md`의 Budget 항목을 다시 보니 **"In the reference run (Claude Code with haiku driving both agents) the trade test took 4 min 41 s and 60 harness calls"** — 교수님 레퍼런스는 양쪽 다 haiku로 돌렸고 정상적으로 끝났다고 명시돼 있었다. 즉 haiku가 구조적으로 이 협상을 못 하는 게 아니라, **내 프롬프트 설계가 문제였다**는 뜻이다. 모델을 올리는 건 증상을 피해 간 것이지 원인을 고친 게 아니었다.
+
+→ **모델은 다시 haiku로 되돌리고, 프롬프트를 두 군데 고쳤다**(`ask_harness_turn`):
+1. `"reserve 이상이면 보통(normally) ACCEPT하라"` → **`"reserve 이상이면 반드시(MUST) ACCEPT하라"`** (여지를 주는 단어를 없앰)
+2. `"COUNTER with a new price"`(얼마나 낮출지 지시 없음) → **직전 호가와 상대 제안의 중간값을 코드로 미리 계산해 "예: COUNTER 105" 식으로 프롬프트에 구체적 숫자를 박아 제시**하고 "직전 호가보다 반드시 낮게, 최소 절반은 좁혀라"고 명시
+
+같은 haiku로 재실행하니:
 ```
-150 → 135 → 120 → Deal: lamp at 120.                              (3라운드, 안전장치 미관여)
-380 → 340 → 310 → 280 → 265 → 262 → 260 → No deal at 230.          (모델 스스로 REJECT)
+lamp: asking 150.
+60  → Counteroffer: 105.
+105 → Deal: lamp at 105.                                           (2라운드, 안전장치 미관여)
+
+bookshelf: asking 350.
+140 → Counteroffer: 260.                                           (reserve까지 한 번에 수렴)
+230 → Counteroffer: 260.  (반복, reserve 아래로는 절대 안 내려감)
 ```
-매 라운드 가격이 실제로 움직였고, `seller_holds_reserve`에서는 reserve(260)로 점점 수렴하다가 예산(230)으로는 불가능하다고 **모델 스스로 판단해 REJECT**했다 — 코드 안전장치가 전혀 관여하지 않았다. 21/21 테스트는 두 경우 다 통과했다는 점이 중요하다: **"통과/실패"만으로는 코드 가드가 결과를 만든 건지 모델이 실제로 협상한 건지 구별이 안 되고, 로그를 직접 까봐야 드러난다**는 게 이번 과제에서 얻은 가장 큰 교훈이다.
+haiku가 첫 역제안부터 바로 큰 폭으로(150→105, 350→260) 움직였고, 수락도 모델이 직접 결정했다 — `MAX_ROUNDS` 안전장치는 전혀 관여하지 않았다. 21/21 통과는 세 버전(원래 haiku / sonnet / 고친 haiku) 다 동일했다는 점이 핵심이다: **"통과/실패"만으로는 코드 가드가 결과를 만든 건지, 모델이 실제로 협상한 건지, 혹은 더 비싼 모델로 문제를 피해 간 건지 전혀 구별이 안 되고, 로그를 직접 까보고 레퍼런스 조건(교수님도 haiku를 썼다)과 비교해야만 드러난다**는 게 이번 과제에서 얻은 가장 큰 교훈이다. "안 되면 더 큰 모델을 쓴다"가 아니라 "프롬프트/코드 구조를 고친다"가 먼저여야 한다는 뜻이기도 하다.
 
 ## 4. A2A가 해결해준 것, 안 해준 것
 
@@ -69,4 +80,17 @@ A2A가 고정해 준 것은 발견(Agent Card로 상대의 skill·인터페이�
 
 ## 5. 챌린지 1, 2
 
-아직 착수하지 않았다. 트레이드 테스트 통과(위 1~4)까지만 이번 라운드에서 진행했고, 챌린지 1(대형 카탈로그 셀러)과 챌린지 2(여러 상점을 상대하는 쇼핑리스트 바이어)는 다음 작업으로 남겨둔다.
+### 챌린지 1: 대형 카탈로그 셀러 (완료)
+
+- **카탈로그**: `generate_catalog.py`가 가구 종류(10) × 재질(12) × 크기(6) × 특징(10) 조합으로 `catalog.json`에 **7200개** 품목(`name`, `description`, `reserve`)을 생성한다. 나무 재질(oak/walnut/pine/maple/birch/reclaimed wood/bamboo)은 설명에 "wooden (재질명)"을 넣어, "wooden" 같은 범용 단어로도 검색되게 했다.
+- **후보 추리기**: 매 턴 카탈로그 전체를 프롬프트에 넣는 대신, **SQLite FTS5**(표준 라이브러리, 추가 설치 없음)에 `name`/`description`을 색인해두고, 바이어의 설명문을 그대로 `MATCH` 쿼리로 던져 **상위 8개만** 하네스에 보여준다(`catalog_seller.py`의 `Catalog.search`). 나머지 7192개는 하네스가 아예 보지 못한다.
+- **품목 선택**: 그 8개 후보 목록(이름+설명만, 가격은 숨김)을 보여주고 하네스에게 `PICK <정확한 이름>` 한 줄로 고르게 한다. 후보 목록에 없는 이름을 답하면(환각) 코드가 무시하고 FTS5 1위 결과로 대체하는 가드를 둠.
+- **가격 협상**: 품목이 정해지면 `seller.py`의 `ask_harness_open`/`ask_harness_turn`을 **그대로 재사용** — reserve 미만 금지 가드도 동일하게 적용된다.
+- **실제 실행 결과**(`logs/challenge-1/catalog-runs.log`):
+  - `"something wooden to keep about 40 books, not taller than my desk"` → 후보 8개(metal/glass/wicker/rattan/oak/walnut/pine/maple bookshelf가 섞여있었음) 중 **"low-profile oak bookshelf"**(reserve 170)를 정확히 선택. 100원 제안은 거절, 170원에 정확히 reserve에서 성사.
+  - `"a sturdy metal stool on wheels I can roll around my workshop"` → **"standard metal stool with wheels"**를 선택, 95원에 성사.
+  - 두 런 모두 틀린 품목을 팔지 않았고, 선택된 품목의 reserve 아래로 호가/판매가 내려간 적 없다.
+
+### 챌린지 2: 다중 상점 바이어
+
+아직 착수하지 않았다. 다음 작업으로 남겨둔다.
