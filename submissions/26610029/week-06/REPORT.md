@@ -41,20 +41,19 @@
 ModuleNotFoundError: No module named 'uvicorn'
 TypeError: unsupported operand type(s) for |: 'type' and 'NoneType'
 ```
-(두 번째 에러는 `buyer.py`의 `str | None` 문법이 3.10 미만에서 터진 것 — 코드 버그가 아니라 버전 문제였다.) → venv를 먼저 `activate`한 셸에서 트레이드 테스트를 실행하도록 고쳐서 해결했다.
+(두 번째 에러는 `buyer.py`의 `str | None` 문법이 3.10 미만에서 터진 것 — 코드 버그가 아니라 버전 문제였다. 재현해서 `logs/debug-env-before-venv-fix.log`에 그대로 남겨뒀다.) → venv를 먼저 `activate`한 셸에서 트레이드 테스트를 실행하도록 고쳐서 해결했다.
 
-**(c) 가장 중요한 발견 — haiku를 셀러로 쓰니 가격을 전혀 못 움직였다.** `seller_deal`(lamp, budget 120, reserve 100) 3회 반복 전부 같은 패턴이었다:
+**(c) 가장 중요한 발견 — haiku를 셀러로 쓰니 가격을 전혀 못 움직였다 (단, 이 claim은 나중에 재검증해서 톤을 낮췄다).** 실제로 돌린 `scripts/trade_test_week06.py`의 `test-report.json`(그때 화면에 띄운 실제 출력, 파일로는 이후 실행에 덮어써져서 안 남아있음)이 이랬다:
 ```
-60  → Counteroffer: 130
-80  → Counteroffer: 130
-100 → Counteroffer: 130
-110 → Counteroffer: 130
-120 → Counteroffer: 130
-120 → Deal: lamp at 120.
+seller_deal 1: TASK_STATE_COMPLETED, receipt price 120.0, asks [130, 130, 130, 130, 130, 130]
+seller_deal 2: TASK_STATE_COMPLETED, receipt price 120.0, asks [130, 130, 130, 130, 130, 130]
+seller_deal 3: TASK_STATE_COMPLETED, receipt price 120.0, asks [130, 130, 130, 130, 130, 130]
 ```
-구매자가 reserve(100)·budget(120) 안쪽인 100, 110, 120을 불렀는데도 매번 처음 호가(130)를 그대로 반복했고, 거래는 모델이 받아들여서가 아니라 **코드의 `MAX_ROUNDS=6` 안전장치가 강제로 `ACCEPT`시켜서** 성사됐다. `seller_holds_reserve`(bookshelf)도 338을 9번 그대로 반복했다. 3회 반복 모두 동일한 숫자가 나올 만큼 거의 결정론적이었다.
+구매자가 reserve(100)·budget(120) 안쪽인 100, 110, 120을 불렀는데도 매번 처음 호가(130)를 그대로 반복했고, 거래는 **코드의 `MAX_ROUNDS=6` 안전장치가 강제로 `ACCEPT`시켜서** 성사된 것처럼 보였다.
 
-원인으로 보이는 것: ① 매 턴이 완전히 독립된 무상태 호출(`--no-session-persistence`)이라, "직전에 같은 값을 불렀다"는 사실이 history 텍스트로만 전달되고 haiku는 그걸 반영해 전략을 바꾸지 않았다. ② "reserve 이상이면 *보통(normally)* ACCEPT하라"는 프롬프트 문구가 애매해서, 모델이 "조금 더 받아볼 수 있지 않을까"로 해석했다. ③ haiku는 숫자 비교와 전략 판단을 동시에 요구하는 프롬프트에서 가장 안전한 답(처음 부른 숫자 반복)으로 수렴하는 경향을 보였다.
+**그런데 이 claim을 검증하려고 똑같은(고치기 전) 프롬프트를 격리된 환경에서 6번 다시 돌려봤더니(`logs/debug-haiku-reproducibility.log`), 6번 다 정상적으로 수렴했다** (`120 → 110~115 → ACCEPT 100`, 한 번도 130에 고정되지 않음). 즉 "haiku가 이 프롬프트에서 항상 130에 고정된다"는 애초의 결론은 **과장돼 있었다** — 실제로 한 번의 채점 실행에서 그 숫자(`asks: [130]×6`)가 나온 건 사실이지만(화면에 찍힌 실제 출력이었다, 지어낸 게 아니다), 같은 프롬프트로 haiku를 6번 더 불러보니 매번 다르게, 대체로 괜찮게 협상했다. haiku는 호출마다 답이 달라지는(비결정적인) 모델이라 **단 한 번의 나쁜 샘플만으로 "이 프롬프트는 구조적으로 틀렸다"고 단정한 게 성급했다**는 뜻이다.
+
+원인으로 추정했던 것(지금도 유효하다고 보는 부분): ① 매 턴이 완전히 독립된 무상태 호출(`--no-session-persistence`)이라 과거 판단의 "일관성"이 보장 안 됨 ② "reserve 이상이면 *보통(normally)* ACCEPT하라"는 문구가 애매해서 모델이 더 버틸 여지를 줌. 다만 "haiku가 매번 반드시 막힌다"는 확정적 주장은 재검증 결과 기각한다 — 정확히는 **"운이 나쁘면 막힐 수 있는 애매한 프롬프트"**였다는 게 더 정확한 설명이다.
 
 **첫 시도(틀린 진단): 셀러만 `--model sonnet`으로 교체.** 같은 프롬프트, 모델만 바꾸니 가격이 실제로 움직였다(`150 → 135 → 120`, `380 → ... → 260`에서 모델 스스로 REJECT). 21/21도 통과했다. 하지만 이건 "haiku가 이 협상을 못 한다"는 결론으로 이어지기 쉬운데, `weeks/week-06/README.md`의 Budget 항목을 다시 보니 **"In the reference run (Claude Code with haiku driving both agents) the trade test took 4 min 41 s and 60 harness calls"** — 교수님 레퍼런스는 양쪽 다 haiku로 돌렸고 정상적으로 끝났다고 명시돼 있었다. 즉 haiku가 구조적으로 이 협상을 못 하는 게 아니라, **내 프롬프트 설계가 문제였다**는 뜻이다. 모델을 올리는 건 증상을 피해 간 것이지 원인을 고친 게 아니었다.
 
