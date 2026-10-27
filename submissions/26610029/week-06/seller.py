@@ -146,10 +146,11 @@ class Seller(AgentExecutor):
         await TaskUpdater(event_queue=event_queue, task_id=task.id, context_id=task.context_id).cancel()
 
 
-def build(port: int):
+def build(port: int, reserve: dict = None, name: str = NAME):
+    reserve = reserve or RESERVE
     url = f"http://127.0.0.1:{port}/"
     card = AgentCard(
-        name=NAME,
+        name=name,
         description=DESCRIPTION,
         version="1.0.0",
         default_input_modes=["text/plain"],
@@ -159,17 +160,23 @@ def build(port: int):
         skills=[AgentSkill(
             id="negotiate",
             name="Negotiate a purchase",
-            description="Ask for an item, then send a price. The shop answers with a counteroffer or a receipt.",
+            description=f"Sells: {', '.join(reserve)}. Ask for one of these, then send a price as a number. "
+                        "The shop answers with a counteroffer or a receipt.",
             tags=["shopping", "negotiation"],
-            examples=["I want to buy a lamp", "90"],
+            examples=[f"I want to buy a {next(iter(reserve))}", "90"],
         )],
     )
-    handler = DefaultRequestHandler(agent_executor=Seller(RESERVE), task_store=InMemoryTaskStore(), agent_card=card)
+    handler = DefaultRequestHandler(agent_executor=Seller(reserve), task_store=InMemoryTaskStore(), agent_card=card)
     return Starlette(routes=create_agent_card_routes(card) + create_jsonrpc_routes(handler, "/"))
 
 
 if __name__ == "__main__":
     ap = argparse.ArgumentParser()
     ap.add_argument("--port", type=int, required=True)
-    args = ap.parse_args()
-    uvicorn.run(build(args.port), host="127.0.0.1", port=args.port, log_level="warning")
+    ap.add_argument("--items", default=None, help="comma-separated subset of lamp,chair,bookshelf (default: all)")
+    ap.add_argument("--price-mult", type=float, default=1.0, help="multiplies every reserve (challenge 2: vary shops)")
+    ap.add_argument("--name", default=NAME)
+    cli_args = ap.parse_args()
+    items = cli_args.items.split(",") if cli_args.items else list(RESERVE)
+    cli_reserve = {k: round(RESERVE[k] * cli_args.price_mult) for k in items}
+    uvicorn.run(build(cli_args.port, cli_reserve, cli_args.name), host="127.0.0.1", port=cli_args.port, log_level="warning")

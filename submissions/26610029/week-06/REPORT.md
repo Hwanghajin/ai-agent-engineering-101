@@ -91,6 +91,15 @@ A2A가 고정해 준 것은 발견(Agent Card로 상대의 skill·인터페이�
   - `"a sturdy metal stool on wheels I can roll around my workshop"` → **"standard metal stool with wheels"**를 선택, 95원에 성사.
   - 두 런 모두 틀린 품목을 팔지 않았고, 선택된 품목의 reserve 아래로 호가/판매가 내려간 적 없다.
 
-### 챌린지 2: 다중 상점 바이어
+### 챌린지 2: 다중 상점 바이어 (완료)
 
-아직 착수하지 않았다. 다음 작업으로 남겨둔다.
+- **디렉터리(20개 진짜 Agent Card)**: `spawn_shops.py`가 `seller.py`에 추가한 `--items`/`--price-mult`/`--name` 옵션으로 **같은 코드를 20벌** 띄운다(품목 조합 7종류 × 가격 배율 7종류를 돌려가며). 각 인스턴스의 **진짜 `/.well-known/agent-card.json`을 직접 GET**해서 `directory.json`에 모은다 — 합성 스키마가 아니라 요구사항 그대로 "진짜 Agent Card"다.
+- **품목→가게 매칭**: 카드 20개의 `skills[].description`("Sells: lamp, chair" 같은 문장)을 한 번에 프롬프트에 넣고, 쇼핑 리스트 품목 하나당 하네스에게 후보 가게 **최대 3곳**을 고르게 한다(`ask_harness_candidates`).
+- **"여러 가게와 동시에 흥정"**: 그 후보 2~3곳과 `asyncio.gather` + `asyncio.to_thread`로 **진짜 동시에** 협상하고(`buyer.py`의 기존 `negotiate_one`을 그대로 재사용, async로 다시 짜지 않고 스레드로 감쌈), 그중 **실제로 성사된 것 중 제일 싼 곳**을 채택한다.
+- **상태 요약(이 챌린지의 핵심)**: 품목을 하나 살 때마다 과거 대화 전체를 들고 다니지 않고 `"bought {item} from {shop} at {price}"` **한 줄 요약**만 쌓고, 다음 품목 협상에는 **남은 예산 숫자 하나**만 넘긴다. 과거 가게들과 나눈 대화는 전혀 재사용하지 않는다.
+- **코드 가드**: 중복구매 방지(이미 산 품목이면 코드가 아예 하네스를 안 부르고 건너뜀), 예산 가드(`buyer.py`의 기존 `min(price, budget)` 패턴을 "남은 예산" 기준으로 그대로 재사용).
+- **실행 중 발견한 버그**: 하네스가 가게 이름을 답할 때(`"Shop 01 (lamp)"`) 괄호 부분을 생략하고 `"Shop 01"`로 줄여 말해서, 정확 일치 검증이 전부 실패해 `lamp`의 후보가 0개로 나왔다(`logs/challenge-2/shopping-runs.log` 참고). 정확 일치 대신 **"응답이 디렉터리 이름의 접두사인지"**로 바꿔서 해결했다.
+- **결과** (`logs/challenge-2/shopping-runs.log`):
+  - 예산 650으로 `[lamp, chair, bookshelf]` 전부 구매 성공 — lamp 103, chair 220, bookshelf 290, 합계 613/650, **목록 전부 구매 + 예산 준수 + 중복 없음** 전부 통과.
+  - 같은 리스트에 `lamp`를 중복으로 넣어도 두 번째 `lamp`는 `"skip lamp: already bought"`로 걸러져 가게에 아예 안 보냄.
+- **정직하게 남긴 한계**: 후보 2~3곳에 동시에 흥정을 거니, 그중 2곳 이상이 동시에 거래를 성사(`COMPLETED`)시킬 수 있다 — A2A엔 완료된 task를 취소하는 수단이 없어서, "선택 안 된" 가게는 자기가 실제로 팔았다고 믿게 된다. 이번 과제 범위에서는 이 부분을 우회 설계하지 않고 한계로 남겨뒀다.

@@ -90,58 +90,66 @@ def ask_harness_offer(item: str, budget: int, history: list[str], ask):
     return "PARSE_FAILED", None, reply
 
 
-def main():
-    ap = argparse.ArgumentParser()
-    ap.add_argument("--url", required=True)
-    ap.add_argument("--item", required=True)
-    ap.add_argument("--budget", type=int, required=True)
-    args = ap.parse_args()
+def negotiate_one(base_url: str, item: str, budget: int) -> dict:
+    """Negotiate for ONE item with ONE shop, start to finish. Reused as-is by
+    shopping_buyer.py (challenge 2) to talk to several shops; the single-shop
+    CLI below is a thin wrapper around this same function.
 
-    card = fetch_card(args.url)
+    Returns {"shop_url", "deal": bool, "price": float|None, "task_id": str|None}.
+    """
+    card = fetch_card(base_url)
     iface = (card.get("supportedInterfaces") or [{}])[0]
-    rpc_url = iface.get("url") or args.url
+    rpc_url = iface.get("url") or base_url
 
-    t, err = send(rpc_url, f"I want to buy a {args.item}")
+    t, err = send(rpc_url, f"I want to buy a {item}")
     if t is None:
-        print(f"no response from seller: {err}")
-        return
+        return {"shop_url": base_url, "deal": False, "price": None, "task_id": None}
     task_id = t.get("id")
-    history = [f"[you] I want to buy a {args.item}"]
+    history = [f"[you] I want to buy a {item}"]
 
     rounds = 0
     while state(t) == "TASK_STATE_INPUT_REQUIRED" and rounds < MAX_ROUNDS:
         history.append(f"[seller] {status_text(t)}")
         ask = last_number(t)
 
-        if ask is not None and ask <= args.budget:
+        if ask is not None and ask <= budget:
             # guard: never pass up, and never let the harness walk away from, an affordable price
             offer = ask
         else:
-            action, price, raw = ask_harness_offer(args.item, args.budget, history, ask)
+            action, price, raw = ask_harness_offer(item, budget, history, ask)
             if action == "WALK":
-                print(f"walking away: seller's ask {ask} is above budget {args.budget}")
                 history.append("[you] (walked away)")
                 rpc(rpc_url, "CancelTask", {"id": task_id})
-                return
+                return {"shop_url": base_url, "deal": False, "price": None, "task_id": task_id}
             if action == "OFFER" and price is not None:
-                offer = min(price, args.budget)          # guard: never exceed the budget
-            else:                                         # harness did not follow the format
-                offer = min(ask - 1, args.budget) if ask is not None else args.budget
+                offer = min(price, budget)          # guard: never exceed the budget
+            else:                                    # harness did not follow the format
+                offer = min(ask - 1, budget) if ask is not None else budget
 
         history.append(f"[you] {offer}")
         t, err = send(rpc_url, str(offer), task_id)
         rounds += 1
         if t is None:
-            print(f"error from seller: {err}")
-            return
+            return {"shop_url": base_url, "deal": False, "price": None, "task_id": task_id}
 
     if state(t) == "TASK_STATE_COMPLETED":
-        print(f"deal: {args.item} at {receipt_price(t)} (budget {args.budget})")
-    elif state(t) == "TASK_STATE_REJECTED":
-        print("no deal: seller rejected")
+        return {"shop_url": base_url, "deal": True, "price": receipt_price(t), "task_id": task_id}
+    if state(t) not in ("TASK_STATE_REJECTED",):
+        rpc(rpc_url, "CancelTask", {"id": task_id})      # gave up after MAX_ROUNDS: leave cleanly
+    return {"shop_url": base_url, "deal": False, "price": None, "task_id": task_id}
+
+
+def main():
+    ap = argparse.ArgumentParser()
+    ap.add_argument("--url", required=True)
+    ap.add_argument("--item", required=True)
+    ap.add_argument("--budget", type=int, required=True)
+    args = ap.parse_args()
+    result = negotiate_one(args.url, args.item, args.budget)
+    if result["deal"]:
+        print(f"deal: {args.item} at {result['price']} (budget {args.budget})")
     else:
-        print(f"no deal: giving up after {rounds} rounds")
-        rpc(rpc_url, "CancelTask", {"id": task_id})
+        print(f"no deal (budget {args.budget})")
 
 
 if __name__ == "__main__":
